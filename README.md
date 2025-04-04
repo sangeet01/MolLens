@@ -96,6 +96,6 @@ Fork the repo, submit pull requests, or report issues. Contact Sangeet S. via Li
 This project utilized ChatGPT for code generation and preliminary testing, Gemini for debugging, and xAI for optimizations. The core algorithm was designed entirely by me, and rigorous testing is being conducted to ensure its validity and robustness.
 
 ## Contact
-Contributions to Nature_MS are welcome! Please fork the repository, make your changes, and submit a pull request. For questions or to discuss potential contributions, contact Sangeet Sharma on LinkedIn.
+Contributions to Nature_MS are welcome! Please fork the repository, make your changes, and submit a pull request. For questions or to discuss potential contributions, contact [Sangeet Sharma](https://www.linkedin.com/in/sangeet-sangiit01) on LinkedIn.
 
 PS: Sangeet's the name, a daft undergrad splashing through chemistry and code like a toddler—my titrations are a mess, and I've used my mouth to pipette.
