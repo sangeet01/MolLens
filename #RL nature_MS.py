@@ -1,4 +1,5 @@
-#RL ADDED NO MOCKED DATA    
+#apache licensed
+#!/usr/bin/env python3
 # NatureMS Core Pipeline - Hardware Optimized Structure Elucidation
 
 import argparse
@@ -20,7 +21,7 @@ from sklearn.ensemble import RandomForestClassifier
 
 # Local imports
 from molformer import MolFormer
-from stereonet import StereoNet, smiles_to_graph
+from chiral import StereoNet, smiles_to_graph
 
 class NatureMS:
     """Main pipeline class handling end-to-end processing"""
@@ -54,6 +55,9 @@ class NatureMS:
 
         # Ensemble weights
         self.ensemble_weights = {'rules': 0.3, 'ml': 0.4, 'sirius': 0.3}
+
+        # SMILES vocabulary for MolFormer decoding
+        self.smiles_vocab = list("CcNnoOsS(=)[]1234567890@#H+-")  # Simplified SMILES characters
 
     def _configure_hardware(self) -> torch.device:
         """Set hardware context based on user choice"""
@@ -153,7 +157,6 @@ class NatureMS:
         features = [processed_data['mass']]
         for loss in self.neutral_losses:
             features.append(1 if any(f.get('loss') == loss for f in processed_data['tree']['fragments']) else 0)
-        # Add isotope feature (replace with real isotopic analysis if needed)
         features.append(0)  # Placeholder for 13C/12C ratio
         pred = self.rf_classifier.predict([features])[0]  # Train with COCONUT/PubChem
         classes = ['terpenes', 'alkaloids', 'carbohydrates', 'polyketides', 'lipids', 'shikimates', 'peptides', 'organometallics']
@@ -176,6 +179,22 @@ class NatureMS:
         with open(self.config['output_dir'] / 'sirius_smiles.txt', 'r') as f:
             return f.read().strip()
 
+    def _mz_to_tokens(self, frag_mzs: List[float]) -> torch.Tensor:
+        """Convert m/z values to token indices for MolFormer"""
+        tokens = [min(int(mz / 10), 299) for mz in frag_mzs]  # Map m/z to 0-299 range
+        return torch.tensor(tokens, dtype=torch.long, device=self.device).unsqueeze(0)
+
+    def _decode_smiles(self, logits: torch.Tensor) -> str:
+        """Decode MolFormer logits to SMILES string"""
+        token_ids = logits.argmax(-1)[0].cpu().numpy()  # Get most likely tokens
+        smiles = ''
+        for token_id in token_ids:
+            if token_id < len(self.smiles_vocab):
+                smiles += self.smiles_vocab[token_id]
+            else:
+                break  # Stop at unknown token
+        return smiles
+
     def _assemble_structures(self, processed_data: Dict[str, Any]) -> List[str]:
         """Hybrid structure assembly with RL-inspired iterative refinement"""
         compound_class = self._predict_class(processed_data)
@@ -190,13 +209,11 @@ class NatureMS:
         for iteration in range(max_iterations):
             # Rule-based assembly (adjust units based on iteration)
             if compound_class == 'terpenes':
-                # Adjust number of units: try base_units ± iteration
                 units = base_units + (iteration - max_iterations // 2)
                 if units < 1:
                     units = 1
                 rules_smiles = 'CC(C)=C' * units
             elif compound_class == 'peptides':
-                # Adjust peptide length
                 units = max(1, base_units // 100 + (iteration - max_iterations // 2))
                 rules_smiles = 'CC(N)C(=O)' * units
             else:
@@ -212,21 +229,22 @@ class NatureMS:
                     if reward > best_reward:
                         best_reward = reward
                         best_smiles = rules_smiles
-                    # Stop if reward is good enough
                     if mass_error < 0.001:  # 0.1% error threshold
                         break
             else:
                 reward = -float('inf')
 
-        # MolFormer (using real predict method from molformer.py)
+        # MolFormer
         frag_mzs = [processed_data['tree']['precursor']] + [f['m/z'] for f in processed_data['tree']['fragments']]
+        tokens = self._mz_to_tokens(frag_mzs)
         with torch.no_grad():
-            ml_smiles = self.molformer.predict(frag_mzs)  # Assumes MolFormer has a predict method
+            logits = self.molformer(tokens)
+            ml_smiles = self._decode_smiles(logits)
 
-        # SIRIUS 5
+        # SIRIUS
         sirius_smiles = self._run_sirius(processed_data)
 
-        # Use the best SMILES from RL loop if available, otherwise fall back to original rules_smiles
+        # Use the best SMILES from RL loop if available
         rules_smiles = best_smiles if best_smiles else None
         candidates = [s for s in [rules_smiles, ml_smiles, sirius_smiles] if s]
         if not candidates:
@@ -235,9 +253,9 @@ class NatureMS:
         # Ensemble consensus with weighted voting
         if len(candidates) > 1:
             scores = {
-                'rules': 0.5 if rules_smiles else 0.0,  # Confidence based on RL reward
-                'ml': 0.7 if ml_smiles else 0.0,       # Confidence from MolFormer
-                'sirius': 0.9 if sirius_smiles else 0.0  # Confidence from SIRIUS
+                'rules': 0.5 if rules_smiles else 0.0,
+                'ml': 0.7 if ml_smiles else 0.0,
+                'sirius': 0.9 if sirius_smiles else 0.0
             }
             weighted_scores = {k: scores[k] * self.ensemble_weights[k] for k in scores}
             best_method = max(weighted_scores, key=weighted_scores.get)
@@ -294,30 +312,12 @@ class NatureMS:
         return stereo_candidates
 
     def _validate_candidates(self, stereo_candidates: List[Dict[str, Any]], processed_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate with MS/MS, energy, and docking"""
-        observed_mz = [f['m/z'] for f in processed_data['tree']['fragments']]
-        for cand in stereo_candidates:
-            mol = Chem.MolFromSmiles(cand['smiles'])
-            if not mol:
-                continue
-
-            # CFM-ID MS/MS prediction (mock, replace with real call)
-            pred_mz = [m + 1 for m in observed_mz]  # Placeholder
-            matches = sum(1 for o_mz in observed_mz for p_mz in pred_mz if abs(o_mz - p_mz) < 5)
-            fit_score = matches / max(len(observed_mz), 1)
-            cosine_sim = fit_score  # Mock, replace with CFM-ID cosine
-
-            # AutoDock Vina (mock, replace with real call)
-            docking_score = -8.1  # Placeholder ΔG
-
-            if cosine_sim >= 0.9 and cand['energy'] <= 3.0 and docking_score <= -8.0:
-                cand['cosine_similarity'] = cosine_sim
-                cand['docking_score'] = docking_score
-                return cand
-        return stereo_candidates[0]  # Default
+        """Validate candidates based on energy"""
+        # Simplified validation: select candidate with lowest energy
+        return min(stereo_candidates, key=lambda x: x['energy'])
 
     def _save_results(self, final_structure: Dict[str, Any], processed_data: Dict[str, Any], stereo_candidates: List[Dict[str, Any]]):
-        """Generate SMILES + JSON output per proposal"""
+        """Generate SMILES + JSON output"""
         mol = Chem.MolFromSmiles(final_structure['smiles'])
         formula = Chem.rdMolDescriptors.CalcMolFormula(mol) if mol else 'Unknown'
         centers = sum(1 for a in mol.GetAtoms() if a.GetChiralTag() != Chem.ChiralType.CHI_UNSPECIFIED) if mol else 0
@@ -327,26 +327,14 @@ class NatureMS:
             'neutral_mass': processed_data['mass'],
             'stereochemistry': {
                 'centers': centers,
-                'method': 'StereoNet + Templates',
-                'confidence': final_structure.get('cosine_similarity', 0.0)  # Update after training
+                'method': 'StereoNet + Templates'
             },
             'isomers': [{'energy_kcal/mol': cand['energy'], 'energy_rank': i + 1}
                        for i, cand in enumerate(sorted(stereo_candidates, key=lambda x: x['energy']))][:2],
             'fragments': [{'m/z': f['m/z'],
-                          'formula': 'Unknown',  # Replace with fragment analysis
                           'intensity': f['intensity'],
-                          'annotation': f.get('loss', 'unknown loss'),
-                          'cosine_similarity': final_structure.get('cosine_similarity', 0.0)}
-                          for f in processed_data['tree']['fragments']],
-            'binding_analysis': {
-                'target': 'EGFR (PDB:1M17)',  # Replace with real target
-                'affinity_kcal/mol': final_structure.get('docking_score', 0.0),
-                'normalized_score': final_structure.get('docking_score', 0.0) * -10,  # Mock normalization
-                'bonded_residues': {'total': 15, 'interacting': 6, 'percentage': 40.0},  # Mock, replace
-                'key_interactions': ['Lys745 (H-bond, 2.8Å)', 'Thr790 (hydrophobic)'],  # Mock, replace
-                'pharmacophore_match': 85.0  # Mock, replace
-            },
-            'warnings': []
+                          'annotation': f.get('loss', 'unknown loss')}
+                          for f in processed_data['tree']['fragments']]
         }
         with open(Path(self.config['output_dir']) / 'output.txt', 'w') as f:
             f.write(f"{result['smiles']}\n{json.dumps(result, indent=2)}")
@@ -373,3 +361,5 @@ if __name__ == '__main__':
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     pipeline = NatureMS(vars(args))
     pipeline.process(Path(args.input))
+
+#end
