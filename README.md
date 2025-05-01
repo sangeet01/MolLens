@@ -85,15 +85,12 @@ External tools (SIRIUS 5, GFN2-xTB, CFM-ID, AutoDock Vina) need separate install
 Apache License 2.0 - see LICENSE file.
 
 ## Citation
-A paper describing NatureMS will be uploaded to arXiv. Once available, please cite:
-Sharma, S, Pandey, B. (2025), "NatureMS: A Hardware Optimized, Open Source Pipeline for De Novo Structure Elucidation of Organic and Organometallic Compounds from Mass Spectrometry Data," arXiv preprint.
+A paper describing NatureMS will be uploaded to arXiv.
+
 
 ## Contributing
-
 Fork the repo, submit pull requests, or report issues. Contact Sangeet S. via LinkedIn for collaboration.
 
-## Acknowledgments
-This project utilized ChatGPT for code generation and preliminary testing, Gemini for debugging, and xAI for optimizations. The core algorithm was designed entirely by me, and rigorous testing is being conducted to ensure its validity and robustness.
 
 ## Contact
 Contributions to Nature_MS are welcome! Please fork the repository, make your changes, and submit a pull request. For questions or to discuss potential contributions, contact [Sangeet Sharma](https://www.linkedin.com/in/sangeet-sangiit01) on LinkedIn.
