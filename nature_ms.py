@@ -7,6 +7,7 @@ import os
 import json
 import torch
 import subprocess
+import joblib # ADDED
 import numpy as np
 import cv2
 import pandas as pd
@@ -27,14 +28,37 @@ class NatureMS:
     """Main pipeline class handling end-to-end processing"""
 
     def __init__(self, config: Dict[str, Any]):
+        print("Initializing NatureMS pipeline...")
         self.config = config
         self.device = self._configure_hardware()
 
         # Initialize core models
+        print("Loading MolFormer model...")
         self.molformer = MolFormer().to(self.device)
+        print("Loading StereoNet model...")
         self.stereonet = StereoNet().to(self.device)
-        self.rf_classifier = RandomForestClassifier(n_estimators=100, max_depth=10)  # Train separately
-        self.rf_peak_scorer = RandomForestClassifier(n_estimators=50, max_depth=5)  # For peak scoring
+
+        print("Attempting to load RandomForest models...")
+        try:
+            # TODO: Load trained model, e.g., joblib.load('rf_classifier.joblib')
+            self.rf_classifier = None
+            if self.rf_classifier is None:
+                print("WARNING: rf_classifier could not be loaded. Predictive performance will be affected.")
+        except Exception as e:
+            print(f"ERROR: Failed to load rf_classifier: {e}")
+            self.rf_classifier = None
+
+        try:
+            # TODO: Load trained model, e.g., joblib.load('rf_peak_scorer.joblib')
+            self.rf_peak_scorer = None
+            if self.rf_peak_scorer is None:
+                print("WARNING: rf_peak_scorer could not be loaded. Peak scoring might be affected.")
+        except Exception as e:
+            print(f"ERROR: Failed to load rf_peak_scorer: {e}")
+            self.rf_peak_scorer = None
+
+        # self.rf_classifier = RandomForestClassifier(n_estimators=100, max_depth=10)  # Train separately
+        # self.rf_peak_scorer = RandomForestClassifier(n_estimators=50, max_depth=5)  # For peak scoring
 
         # Adduct mass mapping (Da)
         self.adduct_masses = {
@@ -75,6 +99,7 @@ class NatureMS:
 
     def _load_input_data(self, input_file: Path) -> Dict[str, Any]:
         """Preprocess input data with advanced peak detection"""
+        print(f"Starting input data loading and preprocessing for {input_file}...")
         ext = input_file.suffix.lower()
 
         if ext in ['.mzml', '.mzxml']:
@@ -129,7 +154,14 @@ class NatureMS:
             peaks[:, 1],  # intensity
             [abs(peaks[i, 0] - peaks[i-1, 0]) if i > 0 else 0 for i in range(len(peaks))]  # m/z diff
         ])
-        peak_scores = self.rf_peak_scorer.predict_proba(peak_features)[:, 1] if hasattr(self.rf_peak_scorer, 'predict_proba') else np.ones(len(peaks))
+        if self.rf_peak_scorer and hasattr(self.rf_peak_scorer, 'predict_proba'):
+            peak_scores = self.rf_peak_scorer.predict_proba(peak_features)[:, 1]
+        else:
+            if not self.rf_peak_scorer:
+                print("WARNING: rf_peak_scorer not loaded. Using default peak scores (ones).")
+            else:
+                print("WARNING: rf_peak_scorer does not have predict_proba. Using default peak scores (ones).")
+            peak_scores = np.ones(len(peaks))
         peaks_df['score'] = peak_scores
 
         # Top fragment selection
@@ -150,34 +182,75 @@ class NatureMS:
                 else:
                     frag_tree['fragments'].append({'m/z': mz, 'intensity': intensity})
 
+        print("Finished input data loading and preprocessing.")
         return {'mass': neutral_mass, 'tree': frag_tree}
 
     def _predict_class(self, processed_data: Dict[str, Any]) -> str:
         """Compound class prediction with Random Forest"""
+        print("Starting compound class prediction...")
         features = [processed_data['mass']]
         for loss in self.neutral_losses:
             features.append(1 if any(f.get('loss') == loss for f in processed_data['tree']['fragments']) else 0)
-        features.append(0)  # Placeholder for 13C/12C ratio
-        pred = self.rf_classifier.predict([features])[0]  # Train with COCONUT/PubChem
+        features.append(0.0) # TODO: Implement actual 13C/12C ratio calculation from MS data if available.
+
+        pred_class_idx = 0 # Default to first class or handle error
+        if self.rf_classifier:
+            try:
+                pred_class_idx = self.rf_classifier.predict([features])[0]
+            except Exception as e:
+                print(f"ERROR: rf_classifier prediction failed: {e}. Using default class.")
+        else:
+            print("WARNING: rf_classifier not loaded. Using default class 'terpenes'.")
+
         classes = ['terpenes', 'alkaloids', 'carbohydrates', 'polyketides', 'lipids', 'shikimates', 'peptides', 'organometallics']
-        return classes[pred] if pred < len(classes) else 'large_organic'
+        predicted_class = classes[pred_class_idx] if pred_class_idx < len(classes) else 'large_organic'
+        print(f"Predicted compound class: {predicted_class}")
+        return predicted_class
 
     def _run_sirius(self, processed_data: Dict[str, Any]) -> str:
         """Execute SIRIUS with metal support"""
-        temp_ms = Path(self.config['output_dir']) / 'temp.ms'
-        with open(temp_ms, 'w') as f:
-            f.write(f"{processed_data['tree']['precursor']}\n")
-            for frag in processed_data['tree']['fragments']:
-                f.write(f"{frag['m/z']}\n")
-        cmd = [
-            'sirius', '-i', str(temp_ms), '-o', str(self.config['output_dir'] / 'sirius_smiles.txt'),
-            '--elements', 'Fe,Mg,Co', '--profile', 'orbitrap', '--ppm-max', '10'
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"SIRIUS execution failed: {result.stderr}")
-        with open(self.config['output_dir'] / 'sirius_smiles.txt', 'r') as f:
-            return f.read().strip()
+        print("Attempting to run SIRIUS...")
+        output_dir = Path(self.config['output_dir'])
+        temp_ms_file = output_dir / 'temp_sirius_input.ms'
+        sirius_output_file = output_dir / 'sirius_smiles.txt'
+
+        try:
+            with open(temp_ms_file, 'w') as f:
+                f.write(f"{processed_data['tree']['precursor']}\n")
+                for frag in processed_data['tree']['fragments']:
+                    f.write(f"{frag['m/z']}\n")
+
+            cmd = [
+                'sirius', '-i', str(temp_ms_file), '-o', str(sirius_output_file),
+                '--elements', 'Fe,Mg,Co', '--profile', 'orbitrap', '--ppm-max', '10'
+            ]
+            print(f"Executing SIRIUS command: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False) # check=False to handle errors manually
+
+            if result.returncode != 0:
+                error_message = f"SIRIUS execution failed with return code {result.returncode}.\nStderr: {result.stderr.strip()}\nStdout: {result.stdout.strip()}"
+                print(f"ERROR: {error_message}")
+                # Consider whether to raise RuntimeError or return a default/None
+                # For now, let's mimic the original behavior of raising an error for SIRIUS failure
+                raise RuntimeError(error_message)
+
+            print("SIRIUS run successful.")
+            with open(sirius_output_file, 'r') as f:
+                sirius_result = f.read().strip()
+                print(f"SIRIUS result: {sirius_result}")
+                return sirius_result
+
+        except FileNotFoundError:
+            print("ERROR: SIRIUS executable not found. Please ensure it is installed and in PATH.")
+            raise
+        except subprocess.CalledProcessError as e: # Should be caught by check=True, but good practice if check=False
+            print(f"ERROR: SIRIUS subprocess error: {e}")
+            raise RuntimeError(f"SIRIUS subprocess error: {e.stderr}") from e
+        except Exception as e:
+            print(f"ERROR: An unexpected error occurred during SIRIUS execution: {e}")
+            raise RuntimeError(f"Unexpected error in SIRIUS: {e}") from e
+        finally:
+            temp_ms_file.unlink(missing_ok=True) # Clean up temp input file
 
     def _mz_to_tokens(self, frag_mzs: List[float]) -> torch.Tensor:
         """Convert m/z values to token indices for MolFormer"""
@@ -197,6 +270,7 @@ class NatureMS:
 
     def _assemble_structures(self, processed_data: Dict[str, Any]) -> List[str]:
         """Hybrid structure assembly with RL-inspired iterative refinement"""
+        print("Starting structure assembly...")
         compound_class = self._predict_class(processed_data)
         neutral_mass = processed_data['mass']
 
@@ -242,7 +316,11 @@ class NatureMS:
             ml_smiles = self._decode_smiles(logits)
 
         # SIRIUS
-        sirius_smiles = self._run_sirius(processed_data)
+        try:
+            sirius_smiles = self._run_sirius(processed_data)
+        except RuntimeError as e:
+            print(f"Note: SIRIUS step failed: {e}. Proceeding without SIRIUS results.")
+            sirius_smiles = None # Allow pipeline to continue if SIRIUS fails
 
         # Use the best SMILES from RL loop if available
         rules_smiles = best_smiles if best_smiles else None
@@ -252,6 +330,7 @@ class NatureMS:
 
         # Ensemble consensus with weighted voting
         if len(candidates) > 1:
+            # TODO: Confidence scores are currently fixed. Implement dynamic scoring based on evidence.
             scores = {
                 'rules': 0.5 if rules_smiles else 0.0,
                 'ml': 0.7 if ml_smiles else 0.0,
@@ -266,12 +345,15 @@ class NatureMS:
             elif best_method == 'sirius' and sirius_smiles:
                 candidates = [sirius_smiles]
 
+        print(f"Structure assembly finished. Number of candidates: {len(candidates)}")
         return candidates
 
     def _resolve_stereochemistry(self, candidates: List[str]) -> List[Dict[str, Any]]:
         """Resolve stereochemistry with templates and StereoNet"""
+        print("Starting stereochemistry resolution...")
         stereo_candidates = []
-        for smiles in candidates:
+        for smiles_idx, smiles in enumerate(candidates):
+            print(f"Processing candidate {smiles_idx + 1}/{len(candidates)} for stereochemistry: {smiles}")
             mol = Chem.MolFromSmiles(smiles)
             if not mol:
                 continue
@@ -304,43 +386,181 @@ class NatureMS:
                 ff = AllChem.MMFFGetMoleculeForceField(mol)
                 mmff_energy = ff.CalcEnergy() if ff else float('inf')
                 if mmff_energy < 10:  # Pruning threshold
-                    # Mock GFN2-xTB (replace with xtb-python)
-                    gfn_energy = mmff_energy - 2  # Placeholder adjustment
+                    # TODO: Specify path to xtb executable and confirm input/output format.
+                    xtb_executable_path = "xtb" # Placeholder
+                    gfn_energy = mmff_energy # Default to MMFF energy if xTB fails
+                    try:
+                        # 1. Prepare input file for GFN2-xTB (e.g., .xyz from SMILES)
+                        xyz_file = Path(self.config['output_dir']) / f"{Path(stereo_smiles).stem}_temp.xyz"
+                        temp_mol = Chem.MolFromSmiles(stereo_smiles) # Ensure mol object exists
+
+                        if not temp_mol:
+                            print(f"WARNING: Could not create RDKit mol from {stereo_smiles} for GFN2-xTB input generation.")
+                            stereo_candidates.append({'smiles': stereo_smiles, 'energy': mmff_energy}) # Fallback to MMFF
+                            continue
+
+                        temp_mol_with_hs = Chem.AddHs(temp_mol)
+                        # Actual conversion to XYZ format is complex. RDKit itself doesn't write XYZ directly.
+                        # This often requires external libraries or custom code.
+                        # For now, writing a dummy XYZ file.
+                        # A real implementation might use Chem.MolToMolBlock(), then OpenBabel to convert .mol to .xyz
+                        try:
+                            with open(xyz_file, 'w') as f_xyz:
+                                # Placeholder XYZ: a single carbon atom. Replace with actual conversion.
+                                f_xyz.write(f"{temp_mol_with_hs.GetNumAtoms()}\n")
+                                f_xyz.write(f"{stereo_smiles}\n")
+                                for atom in temp_mol_with_hs.GetAtoms():
+                                    pos = temp_mol_with_hs.GetConformer().GetAtomPosition(atom.GetIdx())
+                                    f_xyz.write(f"{atom.GetSymbol()} {pos.x:.4f} {pos.y:.4f} {pos.z:.4f}\n")
+                        except Exception as e_xyz:
+                            print(f"ERROR: Failed to write XYZ file for {stereo_smiles}: {e_xyz}")
+                            stereo_candidates.append({'smiles': stereo_smiles, 'energy': mmff_energy})
+                            continue
+
+                        print(f"Attempting GFN2-xTB for {stereo_smiles}...")
+                        cmd_xtb = [xtb_executable_path, str(xyz_file), "--gfn", "2", "--sp"]
+                        result_xtb = subprocess.run(cmd_xtb, capture_output=True, text=True, check=False, cwd=self.config['output_dir'])
+
+                        if result_xtb.returncode == 0:
+                            for line in result_xtb.stdout.splitlines():
+                                if "TOTAL ENERGY" in line: # Example parsing
+                                    gfn_energy = float(line.split()[-3]) # Convert Ha to kcal/mol if needed (1 Ha = 627.5 kcal/mol)
+                                    break
+                            print(f"GFN2-xTB successful for {stereo_smiles}. Energy: {gfn_energy}")
+                        else:
+                            print(f"WARNING: GFN2-xTB failed for {stereo_smiles}. Stderr: {result_xtb.stderr.strip()}")
+                        xyz_file.unlink(missing_ok=True)
+
+                    except FileNotFoundError:
+                        print(f"ERROR: xtb executable not found at {xtb_executable_path}. Cannot run GFN2-xTB.")
+                    except subprocess.CalledProcessError as e_xtb_sub: # If check=True were used
+                        print(f"ERROR: GFN2-xTB subprocess error for {stereo_smiles}: {e_xtb_sub.stderr}")
+                    except Exception as e_xtb:
+                        print(f"ERROR: An unexpected error during GFN2-xTB calculation for {stereo_smiles}: {e_xtb}")
+
                     stereo_candidates.append({'smiles': stereo_smiles, 'energy': gfn_energy})
+
         if not stereo_candidates:
-            raise RuntimeError("No valid stereochemistry resolved")
+            print("WARNING: No valid stereoisomers after GFN2-xTB validation.")
+            # Depending on desired behavior, could raise error or return original candidates
+            # For now, let's ensure it returns a list, even if empty or based on MMFF only if xTB fails for all
+            # The original code raises RuntimeError, so we'll keep that if truly nothing gets appended.
+            # However, the logic above now appends even if xTB fails (using mmff_energy as fallback).
+            # So, this RuntimeError might only be hit if all initial SMILES are invalid.
+            if not any('energy' in sc for sc in stereo_candidates): # Check if any candidate has energy
+                 raise RuntimeError("No valid stereochemistry resolved after energy calculations.")
+
+        print(f"Stereochemistry resolution finished. {len(stereo_candidates)} candidates with energy.")
         return stereo_candidates
 
     def _validate_candidates(self, stereo_candidates: List[Dict[str, Any]], processed_data: Dict[str, Any]) -> Dict[str, Any]:
         """Validate with MS/MS, energy, and docking"""
+        print("Starting candidate validation...")
+        if not stereo_candidates:
+            print("WARNING: No candidates to validate.")
+            # This case should ideally be handled by the caller or return a specific error/None
+            # For now, to prevent IndexError, let's raise an error or return a dummy.
+            raise ValueError("Cannot validate an empty list of stereo candidates.")
+
         observed_mz = [f['m/z'] for f in processed_data['tree']['fragments']]
-        for cand in stereo_candidates:
+
+        best_candidate = stereo_candidates[0] # Default to first if all fail validation steps
+        max_score = -1 # Placeholder for a combined score if multiple checks pass
+
+        for idx, cand in enumerate(stereo_candidates):
+            print(f"Validating candidate {idx + 1}/{len(stereo_candidates)}: {cand['smiles']}")
             mol = Chem.MolFromSmiles(cand['smiles'])
             if not mol:
+                print(f"WARNING: Could not create RDKit mol for validation: {cand['smiles']}")
                 continue
 
-            # CFM-ID MS/MS prediction (mock, replace with real call)
-            pred_mz = [m + 1 for m in observed_mz]  # Placeholder
-            matches = sum(1 for o_mz in observed_mz for p_mz in pred_mz if abs(o_mz - p_mz) < 5)
-            fit_score = matches / max(len(observed_mz), 1)
-            cosine_sim = fit_score  # Mock, replace with CFM-ID cosine
+                continue
 
-            # AutoDock Vina (mock, replace with real call)
-            docking_score = -8.1  # Placeholder ΔG
+            # CFM-ID MS/MS prediction
+            # TODO: Specify path to cfmid executable and confirm input/output format.
+            # TODO: Implement actual MS/MS matching and cosine similarity calculation.
+            cfmid_executable_path = "cfmid" # Placeholder
+            cosine_sim = 0.0 # Default if CFM-ID fails or is skipped
+            print(f"Attempting CFM-ID for {cand['smiles']}...")
+            try:
+                cfm_input_file = Path(self.config['output_dir']) / f"{Path(cand['smiles']).stem}_cfm_input.txt"
+                with open(cfm_input_file, 'w') as f_cfm: f_cfm.write(cand['smiles'])
+                cfm_output_file = Path(self.config['output_dir']) / f"{Path(cand['smiles']).stem}_cfm_output.txt"
 
-            if cosine_sim >= 0.9 and cand['energy'] <= 3.0 and docking_score <= -8.0:
-                cand['cosine_similarity'] = cosine_sim
-                cand['docking_score'] = docking_score
-                return cand
-        return stereo_candidates[0]  # Default
+                cmd_cfm = [cfmid_executable_path, str(cfm_input_file), str(cfm_output_file)] # Simplified hypothetical cmd
+                # For a real call, you'd uncomment and refine:
+                # result_cfm = subprocess.run(cmd_cfm, capture_output=True, text=True, check=True) # Using check=True
+                # print(f"CFM-ID successful for {cand['smiles']}.")
+                # predicted_spectrum = self._parse_cfmid_output(cfm_output_file) # Placeholder
+                # cosine_sim = self._calculate_cosine_similarity(observed_mz, predicted_spectrum) # Placeholder
+                cosine_sim = 0.1 # Dummy value for now since subprocess is commented
+                print(f"CFM-ID (mock) cosine similarity for {cand['smiles']}: {cosine_sim}")
+                # cfm_input_file.unlink(missing_ok=True)
+                # cfm_output_file.unlink(missing_ok=True)
+            except FileNotFoundError:
+                 print(f"ERROR: CFM-ID executable not found at {cfmid_executable_path}.")
+            except subprocess.CalledProcessError as e_cfm:
+                 print(f"ERROR: CFM-ID execution failed for {cand['smiles']}: {e_cfm.stderr}")
+            except Exception as e_cfm_general:
+                print(f"ERROR: An unexpected error during CFM-ID processing for {cand['smiles']}: {e_cfm_general}")
+
+            # AutoDock Vina
+            # TODO: Specify path to vina executable, receptor PDBQT.
+            # TODO: Implement ligand PDBQT generation and Vina config file preparation.
+            # TODO: Implement actual parsing of Vina output for docking score.
+            vina_executable_path = "vina" # Placeholder
+            receptor_pdbqt_path = Path(self.config.get('receptor_path', 'receptor.pdbqt')) # Example: get from config
+            docking_score = 0.0 # Default if Vina fails or is skipped
+            print(f"Attempting AutoDock Vina for {cand['smiles']}...")
+            try:
+                ligand_pdbqt_file = Path(self.config['output_dir']) / f"{Path(cand['smiles']).stem}_ligand.pdbqt"
+                # Placeholder for ligand prep:
+                with open(ligand_pdbqt_file, 'w') as f_pdbqt: f_pdbqt.write("# Placeholder PDBQT for " + cand['smiles'])
+
+                vina_config_file = Path(self.config['output_dir']) / f"{Path(cand['smiles']).stem}_vina_config.txt"
+                # Placeholder for Vina config:
+                with open(vina_config_file, 'w') as f_cfg:
+                    f_cfg.write(f"receptor = {receptor_pdbqt_path.name}\nligand = {ligand_pdbqt_file.name}\n")
+                    f_cfg.write("center_x = 0\ncenter_y = 0\ncenter_z = 0\nsize_x = 20\nsize_y = 20\nsize_z = 20\nout = out.pdbqt\n")
+
+                cmd_vina = [vina_executable_path, "--config", str(vina_config_file), "--log", f"{Path(cand['smiles']).stem}_vina_log.txt"]
+                # For a real call:
+                # result_vina = subprocess.run(cmd_vina, capture_output=True, text=True, check=True, cwd=self.config['output_dir'])
+                # print(f"AutoDock Vina successful for {cand['smiles']}.")
+                # docking_score = self._parse_vina_output(Path(self.config['output_dir']) / f"{Path(cand['smiles']).stem}_vina_log.txt") # Placeholder
+                docking_score = -8.1 # Dummy value for now
+                print(f"AutoDock Vina (mock) score for {cand['smiles']}: {docking_score}")
+                # ligand_pdbqt_file.unlink(missing_ok=True)
+                # vina_config_file.unlink(missing_ok=True)
+            except FileNotFoundError:
+                print(f"ERROR: AutoDock Vina executable not found at {vina_executable_path} or receptor not found at {receptor_pdbqt_path}.")
+            except subprocess.CalledProcessError as e_vina:
+                print(f"ERROR: AutoDock Vina execution failed for {cand['smiles']}: {e_vina.stderr}")
+            except Exception as e_vina_general:
+                print(f"ERROR: An unexpected error during AutoDock Vina processing for {cand['smiles']}: {e_vina_general}")
+
+            # Update candidate with scores
+            cand['cosine_similarity'] = cosine_sim
+            cand['docking_score'] = docking_score
+
+            # Logic to select best candidate based on combined criteria
+            # This is a simple example; a more sophisticated scoring might be needed.
+            current_score = (cosine_sim * 10) - cand.get('energy', float('inf'))/10 + abs(docking_score) # Higher is better
+            if current_score > max_score and cosine_sim >= 0.7 and cand.get('energy', float('inf')) <= 5.0 and docking_score <= -7.0: # Adjusted thresholds
+                 max_score = current_score
+                 best_candidate = cand
+
+        print(f"Candidate validation finished. Best candidate: {best_candidate.get('smiles', 'None')} with combined score factor: {max_score:.2f}")
+        return best_candidate
 
     def _save_results(self, final_structure: Dict[str, Any], processed_data: Dict[str, Any], stereo_candidates: List[Dict[str, Any]]):
         """Generate SMILES + JSON output per proposal"""
-        mol = Chem.MolFromSmiles(final_structure['smiles'])
+        print(f"Saving results for structure: {final_structure.get('smiles', 'N/A')}")
+        mol = Chem.MolFromSmiles(final_structure.get('smiles', ''))
         formula = Chem.rdMolDescriptors.CalcMolFormula(mol) if mol else 'Unknown'
         centers = sum(1 for a in mol.GetAtoms() if a.GetChiralTag() != Chem.ChiralType.CHI_UNSPECIFIED) if mol else 0
         result = {
-            'smiles': final_structure['smiles'],
+            'smiles': final_structure.get('smiles', ''),
             'formula': formula,
             'neutral_mass': processed_data['mass'],
             'stereochemistry': {
@@ -351,19 +571,13 @@ class NatureMS:
             'isomers': [{'energy_kcal/mol': cand['energy'], 'energy_rank': i + 1}
                        for i, cand in enumerate(sorted(stereo_candidates, key=lambda x: x['energy']))][:2],
             'fragments': [{'m/z': f['m/z'],
-                          'formula': 'Unknown',  # Replace with fragment analysis
+                          'formula': '#TODO_formula',  # TODO: Determine actual fragment formulas.
                           'intensity': f['intensity'],
                           'annotation': f.get('loss', 'unknown loss'),
                           'cosine_similarity': final_structure.get('cosine_similarity', 0.0)}
                           for f in processed_data['tree']['fragments']],
-            'binding_analysis': {
-                'target': 'EGFR (PDB:1M17)',  # Replace with real target
-                'affinity_kcal/mol': final_structure.get('docking_score', 0.0),
-                'normalized_score': final_structure.get('docking_score', 0.0) * -10,  # Mock normalization
-                'bonded_residues': {'total': 15, 'interacting': 6, 'percentage': 40.0},  # Mock, replace
-                'key_interactions': ['Lys745 (H-bond, 2.8Å)', 'Thr790 (hydrophobic)'],  # Mock, replace
-                'pharmacophore_match': 85.0  # Mock, replace
-            },
+            # TODO: Implement actual binding analysis data population after AutoDock Vina integration.
+            'binding_analysis': {},
             'warnings': ['Untrained models used']
         }
         with open(Path(self.config['output_dir']) / 'output.txt', 'w') as f:
@@ -371,11 +585,40 @@ class NatureMS:
 
     def process(self, input_file: Path):
         """Execute full processing pipeline"""
+        print(f"--- Starting NatureMS processing for {input_file.name} ---")
+
         raw_data = self._load_input_data(input_file)
+        if not raw_data:
+            print("ERROR: Failed to load or process input data. Halting pipeline.")
+            return
+
         candidates = self._assemble_structures(raw_data)
+        if not candidates:
+            print("ERROR: No candidates assembled. Halting pipeline.")
+            return
+
         stereo_candidates = self._resolve_stereochemistry(candidates)
+        if not stereo_candidates:
+            # This might happen if all SMILES are invalid or energy calculation fails for all
+            print("WARNING: No stereoisomers resolved or validated with energy. Proceeding with non-stereospecific candidates if any.")
+            # Fallback: use candidates from assembly if stereochemistry resolution fails completely
+            # We need to ensure they have an 'energy' key for _validate_candidates, or _validate_candidates needs to handle its absence
+            # For now, if _resolve_stereochemistry returns empty, it means a RuntimeError was hit or all failed.
+            # Let's assume if it's empty, we cannot proceed to validation requiring energy.
+            # The original code would raise RuntimeError in _resolve_stereochemistry if it ends up empty.
+            # If it proceeds (meaning it has some candidates, possibly with MMFF fallback energy), then continue.
+            if not any('energy' in c for c in stereo_candidates) and candidates: # If stereochem somehow returned empty but assembly had results
+                 print("Critical error in stereochemistry resolution, cannot proceed to validation.")
+                 return
+
+
         final_structure = self._validate_candidates(stereo_candidates, raw_data)
+        if not final_structure:
+            print("ERROR: Candidate validation failed to select a final structure. Halting pipeline.")
+            return
+
         self._save_results(final_structure, raw_data, stereo_candidates)
+        print(f"--- NatureMS processing finished for {input_file.name} ---")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
