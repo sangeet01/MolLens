@@ -21,8 +21,8 @@ from scipy.signal import savgol_filter
 from sklearn.ensemble import RandomForestClassifier
 
 # Local imports
-from molformer import MolFormer
-from chiral import StereoNet, smiles_to_graph
+from .molformer import MolFormer
+from .chiral import StereoNet, smiles_to_graph
 
 class NatureMS:
     """Main pipeline class handling end-to-end processing"""
