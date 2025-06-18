@@ -1,9 +1,11 @@
-#chiral 
+# chiral.py
 
 # 3D-Stereo Graph Neural Network - Chiral Center Resolution
 
 import torch
+import torch.nn as nn
 from torch_geometric.nn import GATv2Conv
+from torch_geometric.data import Data
 from rdkit import Chem
 
 class StereoNet(torch.nn.Module):
@@ -19,7 +21,7 @@ class StereoNet(torch.nn.Module):
         self.conv2 = GATv2Conv(hidden_dim * num_heads, hidden_dim, edge_dim=edge_dim)
 
         # Stereo prediction head
-        self.stereo_head = torch.nn.Sequential(
+        self.stereo_head = nn.Sequential(
             nn.Linear(hidden_dim, 64),
             nn.ReLU(),
             nn.Linear(64, 2)  # R/S probability
@@ -35,18 +37,19 @@ class StereoNet(torch.nn.Module):
         return self.stereo_head(x)
 
 def smiles_to_graph(smiles: str, device: torch.device):
-    """Convert SMILES to PyTorch Geometric graph"""
+    """Convert SMILES to PyTorch Geometric Data object."""
     mol = Chem.MolFromSmiles(smiles)
     if not mol:
         return None
     mol = Chem.AddHs(mol)
-    
+
     # Node features (atom type as one-hot)
+    atom_types = ['C', 'H', 'O', 'N', 'S', 'Fe', 'Mg', 'Co', 'Unknown']
     num_atoms = mol.GetNumAtoms()
-    atom_types = ['C', 'H', 'O', 'N', 'S', 'Fe', 'Mg', 'Co']
     x = torch.zeros((num_atoms, len(atom_types)), dtype=torch.float, device=device)
     for i, atom in enumerate(mol.GetAtoms()):
-        idx = atom_types.index(atom.GetSymbol()) if atom.GetSymbol() in atom_types else 0
+        symbol = atom.GetSymbol()
+        idx = atom_types.index(symbol) if symbol in atom_types else atom_types.index('Unknown')
         x[i, idx] = 1.0
 
     # Edge indices and attributes
@@ -59,7 +62,7 @@ def smiles_to_graph(smiles: str, device: torch.device):
     edge_index = torch.tensor(edge_index, dtype=torch.long, device=device).t() if edge_index else torch.empty((2, 0), dtype=torch.long, device=device)
     edge_attr = torch.tensor(edge_attr, dtype=torch.float, device=device).unsqueeze(1) if edge_attr else torch.empty((0, 1), dtype=torch.float, device=device)
 
-    return type('Data', (), {'x': x, 'edge_index': edge_index, 'edge_attr': edge_attr})
+    return Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
 
 # Training function
 def train_stereonet(model, train_loader, epochs=10, device='cpu'):
@@ -76,4 +79,5 @@ def train_stereonet(model, train_loader, epochs=10, device='cpu'):
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
-        print(f"Epoch {epoch+1}, Avg Loss: {total_loss / len(train_loader)}")
+        avg_loss = total_loss / max(1, len(train_loader))
+        print(f"Epoch {epoch+1}, Avg Loss: {avg_loss:.4f}")
