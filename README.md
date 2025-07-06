@@ -23,18 +23,8 @@ NatureMS is an open-source, hardware-optimized pipeline for elucidating structur
    pip install -r requirements.txt
    ```
 
-3. Install external tools manually:
-   - SIRIUS 5 (download from SIRIUS website)
-   - GFN2-xTB
-   - CFM-ID
-   - AutoDock Vina
 
-## Usage
 
-Run the pipeline with an MS file:
-```bash
-python naturems.py input.mzML --ion-mode M+H --runtime colab --output-dir ./results
-```
 
 ### Arguments
 
@@ -43,30 +33,8 @@ python naturems.py input.mzML --ion-mode M+H --runtime colab --output-dir ./resu
 - `--runtime`: Environment (local or colab)
 - `--output-dir`: Directory for results (default: ./results)
 
-## Training
 
-- **MolTransformer**: Train with SMILES + fragment data (e.g., COCONUT)
-  ```python
-  # Use train_molformer in mol_transformer.py
-  from mol_transformer import train_molformer
-  train_molformer(model, train_loader, epochs=10, device='cpu')
-  ```
 
-- **Chiral**: Train with SMILES + R/S labels
-  ```python
-  # Use train_stereonet in chiral.py
-  from chiral import train_stereonet
-  train_stereonet(model, train_loader, epochs=10, device='cpu')
-  ```
-
-- **Random Forest**: Train with compound class data in naturems.py
-
-## Testing
-
-- Test with sample MS data (e.g., mzML from public repositories like MassBank)
-- Check `results/output.txt` for SMILES and JSON output
-
-## Dependencies
 
 See `requirements.txt` for Python dependencies:
 - torch>=2.0.0
