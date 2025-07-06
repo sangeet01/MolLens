@@ -3,12 +3,6 @@
 
 NatureMS is an open-source, hardware-optimized pipeline for elucidating structures of organic and organometallic compounds (30–3000 Da) from mass spectrometry data, including natural products, lipids, carbohydrates, and primary/secondary metabolites. It integrates advanced peak detection (Pipeline X), machine learning (MolTransformer, Chiral), and external tools (SIRIUS 5, GFN2-xTB, CFM-ID, AutoDock Vina) to deliver SMILES and detailed JSON metadata in ≤1 hour/compound on i5 CPU or Colab.
 
-## Features
-
-- **Input**: MS data (.mzML, .csv, PNG/JPG)
-- **Output**: SMILES + JSON (formula, stereochemistry, isomers, fragments, binding analysis)
-- **Pipeline**: Preprocessing, class prediction, structure assembly, stereochemistry resolution, validation, output
-- **Optimization**: Colab GPU or local CPU compatible
 
 ## Installation
 
