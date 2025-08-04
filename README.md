@@ -1,14 +1,14 @@
 
-# NatureMS: De Novo Structure Elucidation Pipeline
+# MolLens: De Novo Structure Elucidation Pipeline
 
-NatureMS is an open-source, hardware-optimized pipeline for elucidating structures of organic and organometallic compounds (30–3000 Da) from mass spectrometry data, including natural products, lipids, carbohydrates, and primary/secondary metabolites. It integrates advanced peak detection (Pipeline X), machine learning (MolTransformer, Chiral), and external tools (SIRIUS 5, GFN2-xTB, CFM-ID, AutoDock Vina) to deliver SMILES and detailed JSON metadata in ≤1 hour/compound on i5 CPU or Colab.
+ MolLens is a novel pipeline for elucidating structures of organic and organometallic compounds (30–3000 Da) from mass spectrometry data, including natural products, lipids, carbohydrates, and primary/secondary metabolites.
 
 
 ## Installation
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/Sangeet01/Nature_MS.git
+   git clone https://github.com/sangeet01/Nature_MS.git
    cd Nature_MS
    ```
 
@@ -18,14 +18,6 @@ NatureMS is an open-source, hardware-optimized pipeline for elucidating structur
    ```
 
 
-
-
-### Arguments
-
-- `input`: Path to .mzML, .csv, or PNG/JPG file
-- `--ion-mode`: Ionization mode (M, M+H, M-H, M+Na, M+NH4)
-- `--runtime`: Environment (local or colab)
-- `--output-dir`: Directory for results (default: ./results)
 
 
 
@@ -47,7 +39,7 @@ External tools (SIRIUS 5, GFN2-xTB, CFM-ID, AutoDock Vina) need separate install
 Apache License 2.0 - see LICENSE file.
 
 ## Citation
-A paper describing NatureMS will be uploaded to arXiv.
+A paper describing  MolLens will be uploaded to arXiv.
 
 
 ## Contributing
@@ -58,3 +50,4 @@ Fork the repo, submit pull requests, or report issues. Contact Sangeet S. via Li
 Contributions to Nature_MS are welcome! Please fork the repository, make your changes, and submit a pull request. For questions or to discuss potential contributions, contact [Sangeet Sharma](https://www.linkedin.com/in/sangeet-sangiit01) on LinkedIn.
 
 PS: Sangeet's the name, a daft undergrad splashing through chemistry and code like a toddler—my titrations are a mess, and I've used my mouth to pipette.
+
