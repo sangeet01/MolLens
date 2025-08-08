@@ -1,8 +1,7 @@
 
 # MolLens: De Novo Structure Elucidation Pipeline
 
- MolLens is a novel pipeline for elucidating structures of organic and organometallic compounds (30–3000 Da) from mass spectrometry data, including natural products, lipids, carbohydrates, and primary/secondary metabolites.
-
+ MolLens is a novel pipeline for elucidating structures from mass spectrometry data.
 
 ## Installation
 
@@ -50,5 +49,6 @@ Fork the repo, submit pull requests, or report issues. Contact Sangeet S. via Li
 Contributions to Nature_MS are welcome! Please fork the repository, make your changes, and submit a pull request. For questions or to discuss potential contributions, contact [Sangeet Sharma](https://www.linkedin.com/in/sangeet-sangiit01) on LinkedIn.
 
 PS: Sangeet's the name, a daft undergrad splashing through chemistry and code like a toddler—my titrations are a mess, and I've used my mouth to pipette.
+
 
 
