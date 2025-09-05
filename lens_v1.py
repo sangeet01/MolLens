@@ -2,8 +2,7 @@
 """
 MolLens v1.0 - Production-Grade MS-to-Structure Deep Learning Pipeline
 
-Enterprise-ready implementation with full MassSpecGym benchmark compliance.
-Hybrid Transformer+GNN architecture optimized for RTX 3080 Ti.
+Hybrid Transformer+GNN architecture 
 
 Features:
 - MassSpecGym benchmark compliance (231K spectra, 31K molecules)
@@ -13,20 +12,20 @@ Features:
 - Comprehensive evaluation metrics (Tanimoto, MCES, Dice)
 - Enterprise deployment configuration
 
-Authors: 
+Authors: SANGEET & PAWAN
 License: 
 Version: 1.0.0
 Date: 2025
 """
 
 __version__ = "1.0.0"
-__author__ = "AI Research Team"
-__license__ = "MIT"
+__author__ = "SANGEET & PAWAN"
+__license__ = " "
 
 # Install packages
-# !pip install torch pytorch-lightning massspecgym rdkit-pypi selfies scikit-learn xgboost datasets optuna
+pip install torch pytorch-lightning massspecgym rdkit-pypi selfies scikit-learn xgboost datasets optuna
 
-
+# Imports
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
