@@ -20,7 +20,7 @@ Date: 2025
 
 __version__ = "1.0.0"
 __author__ = "SANGEET & PAWAN"
-__license__ = " "
+__license__ = "..."
 
 # Install packages
 pip install torch pytorch-lightning massspecgym rdkit-pypi selfies scikit-learn xgboost datasets optuna
