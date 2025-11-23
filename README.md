@@ -21,17 +21,7 @@
 
 
 
-See `requirements.txt` for Python dependencies:
-- torch>=2.0.0
-- torch_geometric>=2.0.0
-- opencv-python>=4.5.0
-- pandas>=1.3.0
-- pymzml>=2.5.0
-- rdkit>=2022.03.1
-- scikit-learn>=1.0.0
-- scipy>=1.7.0
 
-External tools (SIRIUS 5, GFN2-xTB, CFM-ID, AutoDock Vina) need separate installation.
 
 ## License
 
